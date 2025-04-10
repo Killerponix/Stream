@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import mss
 import multiprocessing
+from collections import deque
 
 
 class ImageProvider:
@@ -15,11 +16,16 @@ class ImageProvider:
             monitor = {"top": 0, "left": 0, "width": 1920, "height": 1080}
             while True:
                 img = np.array(sct.grab(monitor))
-                self.queue.put(img)  # Put image in queue
+                if self.queue.full():
+                    try:
+                        self.queue.get_nowait()
+                    except:
+                        pass
+                self.queue.put(img)
 
     def provide(self):
         """Provide image from queue"""
-        return self.queue.get()
+        return self.queue[-1]
 
 
 # if __name__ == "__main__":

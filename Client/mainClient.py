@@ -110,6 +110,14 @@ async def run(pc, signaling):
             print("Connection lost! Attempting to restart...")
             await pc.close()
             await main()  # Verbindung neu aufbauen
+    @pc.on("iceconnectionstatechange")
+    async def on_iceconnectionstatechange():
+        # print(f"ICE connection state: {pc.iceConnectionState}")
+        if pc.iceConnectionState == "failed":
+            print("ICE connection failed!")
+        elif pc.iceConnectionState == "connected":
+            print("ICE connection established.")
+
 
     print("Waiting for offer from sender...")
     offer = await signaling.receive()
@@ -128,6 +136,7 @@ async def run(pc, signaling):
     print("Waiting for connection to be established...")
     while pc.connectionState != "connected":
         await asyncio.sleep(0.1)
+        print(f"Current state: {pc.connectionState}")
 
     print("Connection established, waiting for frames...")
     await asyncio.sleep(100)  # Wait for 35 seconds to receive frames
@@ -135,8 +144,8 @@ async def run(pc, signaling):
     print("Closing connection")
 
 async def main():
-    signaling = TcpSocketSignaling("192.168.178.24", 9999)
-
+    signaling = TcpSocketSignaling("192.168.178.24", 6139)
+    # signaling = TcpSocketSignaling("127.0.0.1", 6139)
     pc = RTCPeerConnection()
 
     global video_receiver
