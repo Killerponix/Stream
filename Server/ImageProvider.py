@@ -22,9 +22,11 @@ class ImageProvider:
                     except:
                         pass
                 self.queue.put(img)
+                # cv2.imwrite("Server_frame.png",img)
 
     def provide(self):
         """Provide image from queue"""
+        # cv2.imshow("provider",self.queue[-1])
         return self.queue[-1]
 
 

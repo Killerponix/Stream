@@ -8,7 +8,7 @@ from aiortc.contrib.signaling import TcpSocketSignaling
 from av import VideoFrame
 from datetime import datetime, timedelta
 from collections import deque
-frame_queue = deque(maxlen=60)
+frame_queue = deque(maxlen=1)
 class VideoReceiver:
 
     def __init__(self,track=None):
@@ -77,6 +77,7 @@ class VideoReceiver:
                 # print(f"Saved frame {frame_count} to file")
                 # video_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 cv2.imshow("Frame", frame)
+                cv2.imwrite("Client_frame.png",frame)
 
                 # Exit on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -96,6 +97,7 @@ async def run(pc, signaling):
         if isinstance(track, MediaStreamTrack):
             print(f"Receiving {track.kind} track")
             asyncio.ensure_future(video_receiver.handle_track(track))
+
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -125,17 +127,24 @@ async def run(pc, signaling):
     await pc.setRemoteDescription(offer)
     print("Remote description set")
 
+    # Antwort erstellen
     answer = await pc.createAnswer()
+
+
     print("Answer created")
+    # await pc.setLocalDescription(modified)
+    # await pc.setLocalDescription(patched_answer)
     await pc.setLocalDescription(answer)
     print("Local description set")
-
+    # await signaling.send(pc.localDescription)
+    # await signaling.send(modified)
     await signaling.send(pc.localDescription)
     print("Answer sent to sender")
 
     print("Waiting for connection to be established...")
     while pc.connectionState != "connected":
         await asyncio.sleep(0.1)
+
         print(f"Current state: {pc.connectionState}")
 
     print("Connection established, waiting for frames...")
