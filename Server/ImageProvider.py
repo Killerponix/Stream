@@ -17,6 +17,32 @@ class ImageProvider:
     #     self.queue = shared_queue
     #     self.running = False
 
+
+    def grab_opt(self):
+        # import psutil, os
+        # p = psutil.Process(os.getpid())
+        # p.nice(psutil.HIGH_PRIORITY_CLASS)  # Windows
+
+
+        with mss.mss() as sct:
+            monitor = {"top": 0, "left": 0, "width": 1920, "height": 1080}
+            frame_counter = 0
+            last_time = time.time()
+            while True:
+                # raw = sct.grab(monitor)
+                frame = np.array(sct.grab(monitor), copy=False)
+                # frame = np.array(raw, copy=False)[:, :, :3]  # RGB nur
+                if not self.queue.full():
+                  self.queue.put(frame)
+                frame_counter += 1
+                current_time = time.time()
+                if current_time - last_time >= 1.0:
+                    print(f"[MSS RAW] FPS: {frame_counter}")
+                    frame_counter = 0
+                    last_time = current_time
+
+
+
     def grab(self):
         """Screenshot-Grabbing-Funktion"""
         last_time = time.time()
@@ -40,6 +66,9 @@ class ImageProvider:
 
 
 
+
+
+######DX läuft nur instabil und nicht besser bei der Datenrate
     def grab_dx (self):
         self.running = True
         thread = threading.Thread(target=self.loop_dx, daemon=True)

@@ -1,76 +1,87 @@
-import cv2
-import subprocess
-import multiprocessing
+import asyncio
+import struct
+import socket
 import time
+import subprocess
+import numpy as np
+import multiprocessing
+import cv2
 from Server.ImageProvider import ImageProvider
 
-class FFmpegStreamer:
-    def __init__(self, width, height, host='192.168.178.24', port=6139):
-        self.width = width
-        self.height = height
-        self.host = host
+class Server_tcp:
+    def __init__(self, port=6139, ip="localhost"):
         self.port = port
+        self.ip = ip
+        self.socket = None
 
-        self.process = subprocess.Popen([
-            'ffmpeg',
-            '-y',
-            '-f', 'rawvideo',
-            '-pix_fmt', 'bgr24',
-            '-s', f'{self.width}x{self.height}',
-            '-r', '60',
-            '-i', '-',
-            '-an',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'zerolatency',
-            '-f', 'mpegts',
-            f'udp://{self.host}:{self.port}'
-        ], stdin=subprocess.PIPE)
+    def createSocket(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2**16)  # Puffergröße anpassen
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2**16)  # Puffergröße anpassen
+        return self.socket
 
-    def send(self, frame):
-        resized = cv2.resize(frame, (self.width, self.height))
-        try:
-            self.process.stdin.write(resized.tobytes())
-        except BrokenPipeError:
-            print("❌ FFmpeg Prozess hat sich beendet.")
+    async def sendVideo(self, queue_encoded):
+        self.socket = self.createSocket()
+        self.socket.connect((self.ip, self.port))
 
-def frame_sender(queue: multiprocessing.Queue):
-    width, height = 1280, 720  # Ziel-Auflösung
-    streamer = FFmpegStreamer(width, height)
+        frame_counter = 0
+        last_time = time.time()
 
-    frame_count = 0
-    start_time = time.time()
+        while True:
+            data = queue_encoded.get()  # Already JPEG-encoded
+            self.socket.sendall(struct.pack("L", len(data)))  # Sende die Größe des Frames
+            self.socket.sendall(data)  # Sende das Bild selbst
 
+            frame_counter += 1
+            current_time = time.time()
+            if current_time - last_time >= 1.0:
+                print(f"[SEND] FPS: {frame_counter} | Size: {len(data) // 1024} KB")
+                frame_counter = 0
+                last_time = current_time
+
+            await asyncio.sleep(0)
+
+# Worker für das Encoding mit FFmpeg
+def encode_worker(input_q: multiprocessing.Queue, output_q: multiprocessing.Queue):
     while True:
-        if not queue.empty():
-            frame = queue.get()
-            if frame is None:
-                break
+        frame = input_q.get()
+        if frame is None:
+            break
 
-            streamer.send(frame)
+        # H.264 Encoding mit FFmpeg und AMF (AMD Encoder)
+        # Frame in JPEG kodieren
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        output_q.put(buffer)  # Das kodierte Bild an die nächste Queue weitergeben
 
-            # FPS-Anzeige
-            frame_count += 1
-            if frame_count % 60 == 0:
-                elapsed = time.time() - start_time
-                fps = frame_count / elapsed
-                print(f"📡 Gesendete FPS: {fps:.2f}")
+# Video-Stream für das Senden
+def run_video_sender(queue_encoded, ip, port):
+    server = Server_tcp(port=port, ip=ip)
+    asyncio.run(server.sendVideo(queue_encoded))
 
-def main():
-    queue = multiprocessing.Queue(maxsize=5)
+async def main():
+    queue_raw = multiprocessing.Queue(maxsize=3)  # Unkomprimierte Frames
+    queue_encoded = multiprocessing.Queue(maxsize=3)  # Komprimierte Frames
 
-    # Starte den ImageProvider, der Frames in die Queue legt
-    image_provider = ImageProvider(queue)
-    grabber_process = multiprocessing.Process(target=image_provider.grab)
+    ip_address = "192.168.178.27"
+    port = 6139
 
-    # Starte den Frame-Sender-Prozess
-    sender_process = multiprocessing.Process(target=frame_sender, args=(queue,))
+    # Bild-Grabbing-Prozess
+    process_grabber = multiprocessing.Process(target=ImageProvider(queue_raw).grab_opt)
 
-    grabber_process.start()
-    sender_process.start()
+    # Encoding-Prozess
+    process_encoder = multiprocessing.Process(target=encode_worker, args=(queue_raw, queue_encoded))
 
-    grabber_process.join()
-    sender_process.join()
+    # Sender-Prozess
+    process_sender = multiprocessing.Process(target=run_video_sender, args=(queue_encoded, ip_address, port))
+
+    # Prozesse starten
+    process_grabber.start()
+    process_encoder.start()
+    process_sender.start()
+
+    process_grabber.join()
+    process_encoder.join()
+    process_sender.join()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

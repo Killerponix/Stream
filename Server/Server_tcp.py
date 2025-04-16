@@ -190,7 +190,8 @@ def encode_worker(input_q: Queue, output_q: Queue):
         frame = input_q.get()
         if frame is None:
             break
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        # frame = cv2.UMat(frame)
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         output_q.put(buffer)
 
 def run_video_sender(queue_encoded, ip, port):
@@ -204,8 +205,8 @@ async def main():
     ip_address = "192.168.178.27"
     port = 6139
 
-    image_provider = ImageProvider(queue)
-    process = multiprocessing.Process(target=image_provider.grab)
+    # image_provider = ImageProvider(queue)
+    # process = multiprocessing.Process(target=image_provider.grab)
     server = Server_tcp(port=port, ip=ip_address)
     server.createSocket()
 
@@ -215,7 +216,7 @@ async def main():
     # process.start()
     # process_server.start()
 
-    process_grabber = multiprocessing.Process(target=ImageProvider(queue_raw).grab)
+    process_grabber = multiprocessing.Process(target=ImageProvider(queue_raw).grab_opt)   #grab_dx() oder grab
     process_encoder = multiprocessing.Process(target=encode_worker, args=(queue_raw, queue_encoded))
     process_sender = multiprocessing.Process(target=run_video_sender, args=(queue_encoded, ip_address, port))
 
