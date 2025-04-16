@@ -20,7 +20,10 @@ class Server_tcp:
         self.socket = None
 
     def createSocket(self):
-        self.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        self.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM) #TCP
+        # self.socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 2**20)
+        self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF, 2**20)
         return self.socket
 
 
@@ -31,11 +34,11 @@ class Server_tcp:
         vgen = VideoStream(queue)
         while True:
             frame = await vgen.recv()
-            buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])[1]
+            buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 100])[1]
             data = buffer.tobytes()
             self.socket.sendall(struct.pack("L",len(data)))
             self.socket.sendall(data)
-            cv2.imshow("source",frame)
+            # cv2.imshow("source",frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             # time.sleep(1/60)
@@ -88,19 +91,20 @@ class VideoStream():
 
 async def main():
     queue = multiprocessing.Queue(maxsize=1)
-    ip_address = "192.168.178.24"
+    ip_address = "192.168.178.27"
     port = 6139
 
     image_provider = ImageProvider(queue)
     process = multiprocessing.Process(target=image_provider.grab)
     server = Server_tcp(port=port, ip=ip_address)
     server.createSocket()
-    # process_server = multiprocessing.Process(target=server.sendVideo(queue))
+    # process_server = multiprocessing.Process(target=server.sendVideo(queue)) #Wrong?
+
     process_server = multiprocessing.Process(target=run_video_sender, args=(queue, ip_address, port))
 
     process.start()
     process_server.start()
-    client = await server.recVideo()
+    # client = await server.recVideo()
 
 
     process.join()
