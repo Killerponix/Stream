@@ -11,57 +11,110 @@ from av import VideoFrame
 
 from Server.ImageProvider import ImageProvider
 
-
+MAX_DGRAM = 65507  # Max UDP payload
+HEADER_SIZE = 4  # für Länge, Sequenz, etc. optional
 
 class Server_tcp:
+
+
     def __init__(self,port=6139,ip="localhost"):
         self.port=port
         self.ip =ip
         self.socket = None
 
     def createSocket(self):
-        self.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM) #TCP
-        # self.socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 2**20)
-        self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF, 2**20)
+        # self.socket = socket.socket(socket.AF_INET,socket.SOCK_STREAM) #TCP
+        self.socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        # self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 2**8)
+        # self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF, 2**8)
         return self.socket
 
+# Für TCP eigenes
+    # async def sendVideo(self,queue):
+    #     self.socket= self.createSocket()
+    #     # self.socket.create_server(self.ip,self.port)
+    #     self.socket.connect((self.ip,self.port))
+    #     vgen = VideoStream(queue)
+    #     frame_counter = 0
+    #     last_time = time.time()
+    #     while True:
+    #         frame = await vgen.recv()
+    #         buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])[1]
+    #         data = buffer.tobytes()
+    #         self.socket.sendall(struct.pack("L",len(data)))
+    #         self.socket.sendall(data)
+    #         # cv2.imshow("source",frame)
+    #             # FPS zählen
+    #         frame_counter += 1
+    #         current_time = time.time()
+    #         if current_time - last_time >= 1.0:
+    #             print(f"[SEND] FPS: {frame_counter} | Frame size: {len(data)//1024} KB")
+    #             frame_counter = 0
+    #             last_time = current_time
+    #
+    #         if cv2.waitKey(1) & 0xFF == ord('q'):
+    #             break
+    #         # time.sleep(1/60)
 
-    async def sendVideo(self,queue):
-        self.socket= self.createSocket()
-        # self.socket.create_server(self.ip,self.port)
-        self.socket.connect((self.ip,self.port))
+
+
+    async def sendVideo(self, queue):
+        self.socket = self.createSocket()
         vgen = VideoStream(queue)
+
         while True:
             frame = await vgen.recv()
-            buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 100])[1]
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
             data = buffer.tobytes()
-            self.socket.sendall(struct.pack("L",len(data)))
-            self.socket.sendall(data)
-            # cv2.imshow("source",frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-            # time.sleep(1/60)
+
+            if len(data) > MAX_DGRAM:
+                print(f"⚠️ Frame too large for one datagram ({len(data)} bytes) – splitting...")
+                # Frame splitten
+                for i in range(0, len(data), MAX_DGRAM - HEADER_SIZE):
+                    chunk = data[i:i + MAX_DGRAM - HEADER_SIZE]
+                    self.socket.sendto(chunk, (self.ip, self.port))
+            else:
+                self.socket.sendto(data, (self.ip, self.port))
+
+            await asyncio.sleep(0)  # Kein Sleep für max FPS
+
+
+
+    # async def recVideo(self):
+    #     self.socket = self.createSocket()
+    #     self.socket.bind((self.ip, self.port))
+    #     self.socket.listen(1)
+    #     conn, addr = self.socket.accept()
+    #     print(f"Connection from {addr}")
+    #
+    #     while True:
+    #         length_data = recv_exact(conn, 4)
+    #         if not length_data:
+    #             break
+    #         length = struct.unpack("L", length_data)[0]
+    #         img_data = recv_exact(conn, length)
+    #         img_array = np.frombuffer(img_data, dtype=np.uint8)
+    #         frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    #         cv2.imshow("Client", frame)
+    #         if cv2.waitKey(1) & 0xFF == ord('q'):
+    #             break
 
 
     async def recVideo(self):
         self.socket = self.createSocket()
         self.socket.bind((self.ip, self.port))
-        self.socket.listen(1)
-        conn, addr = self.socket.accept()
-        print(f"Connection from {addr}")
+        print(f"Listening on {self.ip}:{self.port} via UDP")
 
         while True:
-            length_data = recv_exact(conn, 4)
-            if not length_data:
-                break
-            length = struct.unpack("L", length_data)[0]
-            img_data = recv_exact(conn, length)
-            img_array = np.frombuffer(img_data, dtype=np.uint8)
+            data, _ = self.socket.recvfrom(65507)
+            img_array = np.frombuffer(data, dtype=np.uint8)
             frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-            cv2.imshow("Client", frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+
+            if frame is not None:
+                cv2.imshow("Client", frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
 
 def recv_exact(sock, size):
     data = b""
