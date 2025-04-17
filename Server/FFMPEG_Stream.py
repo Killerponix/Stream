@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import struct
 import socket
 import time
@@ -41,17 +42,70 @@ class Server_tcp:
 
             await asyncio.sleep(0)
 
+
+    async def recVideo(self):
+        self.socket = self.createSocket()
+        self.socket.bind((self.ip, self.port))
+        self.socket.listen(1)
+        conn, addr = self.socket.accept()
+        print(f"Connection from {addr}")
+
+        while True:
+            length_data = recv_exact(conn, 4)
+            if not length_data:
+                break
+            length = struct.unpack("L", length_data)[0]
+            img_data = recv_exact(conn, length)
+            raw_img = base64.b64decode(img_data)
+            img_array = np.frombuffer(raw_img,dtype=np.uint8)
+            # img_array = np.frombuffer(img_data, dtype=np.uint8)
+
+            frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            cv2.imshow("Client", frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+
+
+#UDP
+# async def recVideo(self):
+#     self.socket = self.createSocket()
+#     self.socket.bind((self.ip, self.port))
+#     print(f"Listening on {self.ip}:{self.port} via UDP")
+#
+#     while True:
+#         data, _ = self.socket.recvfrom(65507)
+#         img_array = np.frombuffer(data, dtype=np.uint8)
+#         frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+#
+#         if frame is not None:
+#             cv2.imshow("Client", frame)
+#             if cv2.waitKey(1) & 0xFF == ord('q'):
+#                 break
+
+
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        # packet = sock.recv(size - len(data))
+        packet = sock.recv_string(size-len(data))
+        if not packet:
+            return None
+        data += packet
+    return data
+
 # Worker für das Encoding mit FFmpeg
 def encode_worker(input_q: multiprocessing.Queue, output_q: multiprocessing.Queue):
     while True:
         frame = input_q.get()
         if frame is None:
             break
-
+######### Grayscale it to reduce data
         # H.264 Encoding mit FFmpeg und AMF (AMD Encoder)
         # Frame in JPEG kodieren
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        output_q.put(buffer)  # Das kodierte Bild an die nächste Queue weitergeben
+        encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        img = base64.b64encode(buffer)   #Beim client noch decodieren
+        output_q.put(img)  # Das kodierte Bild an die nächste Queue weitergeben
 
 # Video-Stream für das Senden
 def run_video_sender(queue_encoded, ip, port):
