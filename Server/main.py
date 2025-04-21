@@ -12,7 +12,7 @@ import fractions
 from datetime import datetime
 from collections import deque
 
-from Server_tcp.ImageProvider import ImageProvider
+from Server.ImageProvider import ImageProvider
 
 
 

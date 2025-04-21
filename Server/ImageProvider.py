@@ -40,6 +40,7 @@ class ImageProvider:
                     print(f"[MSS RAW] FPS: {frame_counter}")
                     frame_counter = 0
                     last_time = current_time
+                    # cv2.imshow("Grab", frame)
 
 
 
@@ -56,6 +57,7 @@ class ImageProvider:
                         self.queue.get_nowait()
                     except:
                         pass
+
                 self.queue.put(img)
                 frames += 1
                 if time.time() - last_time >= 1:
@@ -63,6 +65,7 @@ class ImageProvider:
                     frames = 0
                     last_time = time.time()
                 # cv2.imwrite("Server_frame.png",img)
+                #     cv2.imshow("Screenshot-Grabbing-Funktion", img)
 
 
 
