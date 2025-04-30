@@ -192,6 +192,7 @@ async def main():
 
 
 
+
     # client = Server_tcp.recVideo()
     # Bild-Grabbing-Prozess
     process_grabber = multiprocessing.Process(target=ImageProvider(queue_raw).grab_opt)
