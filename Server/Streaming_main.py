@@ -51,6 +51,8 @@ class Server_tcp:
         self.socket = self.createSocket()
         self.socket.bind((self.ip, self.port))
         self.socket.listen(1)
+        frame_counter = 0
+        last_time = time.time()
         conn, addr = self.socket.accept()
         print(f"Connection from {addr}")
 
@@ -78,6 +80,12 @@ class Server_tcp:
 
             frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
             cv2.imshow("Client", frame)
+            frame_counter += 1
+            current_time = time.time()
+            if current_time - last_time >= 1.0:
+                print(f"[Rec] FPS: {frame_counter}")
+                frame_counter = 0
+                last_time = current_time
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
@@ -179,15 +187,15 @@ async def main():
     queue_raw = multiprocessing.Queue(maxsize=3)  # Unkomprimierte Frames
     queue_encoded = multiprocessing.Queue(maxsize=3)  # Komprimierte Frames
 
-    # ip_address = "192.168.178.27"
+    ip_address = "192.168.178.27"
     # ip_address ="192.168.179.18"
     # ip_address = "127.0.0.1"
-    ip_address = "10.20.40.12"
+    # ip_address = "10.20.40.12"
     port = 6139
-    client = Server_tcp(ip=ip_address, port=port)
-    process_client = multiprocessing.Process(target=client.recVideo)
+    # client = Server_tcp(ip=ip_address, port=port)
+    # process_client = multiprocessing.Process(target=client.recVideo)
     # process_client = multiprocessing.Process(target=asyncio.run(client.recVideo()))
-    process_client.start()
+    # process_client.start()
     time.sleep(2)
 
 
@@ -208,7 +216,7 @@ async def main():
     process_encoder.start()
     process_sender.start()
 
-    process_client.join()
+    # process_client.join()
     process_grabber.join()
     process_encoder.join()
     process_sender.join()
