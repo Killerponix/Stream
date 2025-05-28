@@ -19,8 +19,8 @@ class Server_tcp:
 
     def createSocket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # TCP
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2**16)  # Puffergröße anpassen
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2**16)  # Puffergröße anpassen
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2**25)  # Puffergröße anpassen
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2**25)  # Puffergröße anpassen
         self.socket.settimeout(5.0)
         return self.socket
 
@@ -40,7 +40,7 @@ class Server_tcp:
             frame_counter += 1
             current_time = time.time()
             if current_time - last_time >= 1.0:
-                # print(f"[SEND] FPS: {frame_counter} | Size: {len(data) // 1024} KB")
+                print(f"[SEND] FPS: {frame_counter} | Size: {len(data) // 1024} KB")
                 frame_counter = 0
                 last_time = current_time
 
@@ -74,9 +74,9 @@ class Server_tcp:
             #         break
 
             ###### Base 64 decode
-            raw_img = base64.b64decode(img_data)
-            img_array = np.frombuffer(raw_img,dtype=np.uint8)
-            # img_array = np.frombuffer(img_data, dtype=np.uint8)
+            # raw_img = base64.b64decode(img_data)
+            # img_array = np.frombuffer(raw_img,dtype=np.uint8)
+            img_array = np.frombuffer(img_data, dtype=np.uint8)
 
             frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
             cv2.imshow("Client", frame)
@@ -129,53 +129,60 @@ def recv_exact(sock, size):
 # Worker für das Encoding mit FFmpeg
 def encode_worker(input_q: multiprocessing.Queue, output_q: multiprocessing.Queue):
     # print(f"[WORKER] Input Queue: {input_q.get()}")
+    with open('ffmpeg_error_log.txt','w') as ffmpeg_error_file:
+        ffmpeg = subprocess.Popen([
+            'ffmpeg',
+            '-loglevel', 'debug',
+            '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-pix_fmt', 'bgr24',
+            '-s', '1920x1080',
+            '-r', '30',
+            '-i', '-',
+            # '-c:v', 'hevc_amf',
+            '-c:v', 'libx265',
+            '-g', '1',
+            '-b:v', '2M',
+            '-f', 'mpegts',
+            '-flush_packets', '1',
+            '-fflags', '+nobuffer',
+            'pipe:1'
+        ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=ffmpeg_error_file)
 
-    ffmpeg = subprocess.Popen([
-        'ffmpeg',
-        '-loglevel', 'error',
-        '-y',
-        '-f', 'rawvideo',
-        '-vcodec', 'rawvideo',
-        '-pix_fmt', 'bgr24',
-        '-s', '1920x1080',
-        '-r', '30',
-        '-i', '-',
-        '-c:v', 'h264_amf',
-        '-g', '1',  # Keyframe für jedes Frame
-        '-b:v', '2M',
-        '-f', 'mpegts',
-        'out.ts'
-        # 'pipe:1'
-    ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
 
     while True:
         frame = input_q.get()
         if frame is None:
             break
-        # if frame.shape[2] == 4:
-        #     frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-        # print(frame.shape)
-######### Grayscale it to reduce data
-        # ffmpeg.stdin.write(frame.tobytes())
-        # print("nachWrite")
-        # ffmpeg.stdin.flush()
-        # print("Nach FLush")
-        # try:
-        #     h264_data = ffmpeg.stdout.read()
-        #     if h264_data:
-        #         output_q.put(h264_data)
-        # except BlockingIOError:
-        #     pass  # Kein Output gerade, aber Programm blockiert nicht
+        if frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        # print(frame)
+        assert frame.shape == (1080, 1920, 3), f"Invalid frame shape: {frame.shape}"
+        ######### Grayscale it to reduce data
+        try:
+            # print("VorWrite")
+            ffmpeg.stdin.write(frame.tobytes())
+            print("nachWrite")
+            ffmpeg.stdin.flush()
+            print("Nach FLush")
+            print("Data: "+ffmpeg.stdout.read(188*10))
+            h264_data = ffmpeg.stdout.read(188*10)
+
+            if h264_data:
+                output_q.put(h264_data)
+        except Exception as e:
+            error_message = f"Error writing to FFMpeg: {e}\n"
+            pass  # Kein Output gerade, aber Programm blockiert nicht
         # print("h264Data: "+h264_data)
         # output_q.put(h264_data)
 
 ###Base64 Encode oder Grayscale noch probieren
-        encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        img = base64.b64encode(buffer)   #Beim client noch decodieren
-        output_q.put(img)  # Das kodierte Bild an die nächste Queue weitergeben
+        # encoded, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
+        # output_q.put(buffer)  # Das kodierte Bild an die nächste Queue weitergeben
 
 # Video-Stream für das Senden
 def run_video_sender(queue_encoded, ip, port):
@@ -187,15 +194,15 @@ async def main():
     queue_raw = multiprocessing.Queue(maxsize=3)  # Unkomprimierte Frames
     queue_encoded = multiprocessing.Queue(maxsize=3)  # Komprimierte Frames
 
-    ip_address = "192.168.178.27"
+    ip_address = "192.168.178.24"
     # ip_address ="192.168.179.18"
     # ip_address = "127.0.0.1"
     # ip_address = "10.20.40.12"
     port = 6139
-    # client = Server_tcp(ip=ip_address, port=port)
-    # process_client = multiprocessing.Process(target=client.recVideo)
+    client = Server_tcp(ip=ip_address, port=port)
+    process_client = multiprocessing.Process(target=client.recVideo)
     # process_client = multiprocessing.Process(target=asyncio.run(client.recVideo()))
-    # process_client.start()
+    process_client.start()
     time.sleep(2)
 
 
@@ -216,7 +223,7 @@ async def main():
     process_encoder.start()
     process_sender.start()
 
-    # process_client.join()
+    process_client.join()
     process_grabber.join()
     process_encoder.join()
     process_sender.join()

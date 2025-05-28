@@ -77,7 +77,7 @@ class VideoReceiver:
                 # print(f"Saved frame {frame_count} to file")
                 # video_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 cv2.imshow("Frame", frame)
-                cv2.imwrite("Client_frame.png",frame)
+                # cv2.imwrite("Client_frame.png",frame)
 
                 # Exit on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):

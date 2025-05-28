@@ -38,6 +38,7 @@ class ImageProvider:
                 current_time = time.time()
                 if current_time - last_time >= 1.0:
                     print(f"[MSS RAW] FPS: {frame_counter}")
+                    print(f"Size: {len(frame) // 1024} KB")
                     frame_counter = 0
                     last_time = current_time
                     # cv2.imshow("Grab", frame)
