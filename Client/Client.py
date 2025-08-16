@@ -9,72 +9,73 @@ from av import VideoFrame
 from datetime import datetime, timedelta
 from collections import deque
 
+# Frame-Puffer (immer nur letztes Frame)
 frame_queue = deque(maxlen=1)
 
-
 class VideoReceiver:
-
     def __init__(self, track=None):
         self.track = track
-
-    async def recv(self):
-        vf = await asyncio.wait_for(self.track.recv(), timeout=1)
-        img = vf.to_ndarray(format="bgr24")
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        out = VideoFrame.from_ndarray(img_rgb, format="rgb24")
-        out.pts = vf.pts
-        out.time_base = vf.time_base
-        return out
-
+        self.running = True
 
     async def handle_track(self, track):
-
+        """
+        Empfang und Anzeige von Videoframes.
+        Bricht ab, wenn die Verbindung oder der Track endet.
+        """
         global frame_queue
-        print("Inside handle track")
+        print("Inside handle_track")
         self.track = track
         frame_count = 0
-        while True:
+
+        while self.running:
+            # Verbindung tot? -> Schleife beenden
+            if self.track.readyState == "ended":
+                print("Track ended — exiting handle_track")
+                break
+
             try:
-                if self.track.readyState == "ended":
-                    print("Track ended — exiting handle_track")
-                    break
-                # # print("Waiting for frame...")
                 frame = await asyncio.wait_for(track.recv(), timeout=10)
                 frame_queue.append(frame)
                 latest_frame = frame_queue[-1]
                 latest_frame.time_base = fractions.Fraction(1, 60)
-                # frame = self.recv()
                 frame_count += 1
-                if (frame_count % 60 == 0):
+
+                if frame_count % 60 == 0:
                     print(f"Received frame {frame_count}")
 
-                if isinstance(frame, VideoFrame):
-                    # print(f"Frame type: VideoFrame, pts: {frame.pts}, time_base: {frame.time_base}")
-                    frame = latest_frame.to_ndarray(format="bgr24")
-                elif isinstance(frame, np.ndarray):
-                    print(f"Frame type: numpy array")
+                if isinstance(latest_frame, VideoFrame):
+                    img = latest_frame.to_ndarray(format="bgr24")
+                elif isinstance(latest_frame, np.ndarray):
+                    img = latest_frame
                 else:
-                    print(f"Unexpected frame type: {type(frame)}")
+                    print(f"Unexpected frame type: {type(latest_frame)}")
                     continue
 
-                cv2.imshow("Frame", frame)
-                # cv2.imwrite("Client_frame.png",frame)
+                cv2.imshow("Frame", img)
 
                 # Exit on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
+                    print("Manual quit detected")
+                    self.running = False
                     break
+
             except asyncio.TimeoutError:
                 print("Timeout waiting for frame, continuing...")
             except Exception as e:
-                print(f"Error in handle_track: {str(e)}")
-                if "Connection" in str(e):
-                    break
+                print(f"Error in handle_track: {e}")
+                traceback.print_exc()
+                break
+
         print("Exiting handle_track")
 
 
 async def run(pc, signaling):
+    """
+    Baut die WebRTC-Verbindung auf, verwaltet Keep-Alive und startet den Frame-Empfang.
+    """
     await signaling.connect()
 
+    # Keep-Alive-Channel erstellen
     keepalive_channel = pc.createDataChannel("keepalive")
 
     async def send_keepalive():
@@ -84,6 +85,9 @@ async def run(pc, signaling):
             if keepalive_channel.readyState == "open":
                 keepalive_channel.send("ping")
                 print("Keep-Alive: Ping gesendet")
+            else:
+                break
+
     asyncio.create_task(send_keepalive())
 
     @keepalive_channel.on("message")
@@ -101,24 +105,18 @@ async def run(pc, signaling):
     @pc.on("datachannel")
     def on_datachannel(channel):
         print(f"Data channel established: {channel.label}")
-        @channel.on("message")
-        def _(msg):
-            if msg == "ping":
-                channel.send("pong")
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
         print(f"Connection state is {pc.connectionState}")
         if pc.connectionState == "connected":
             print("WebRTC connection established successfully")
-        if pc.connectionState in ["disconnected", "failed"]:
-            print("Connection lost! Attempting to restart...")
+        elif pc.connectionState in ["disconnected", "failed", "closed"]:
+            print("Connection lost! Cleaning up...")
             await pc.close()
-            await main()  # Verbindung neu aufbauen
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
-        # print(f"ICE connection state: {pc.iceConnectionState}")
         if pc.iceConnectionState == "failed":
             print("ICE connection failed!")
         elif pc.iceConnectionState == "connected":
@@ -132,45 +130,48 @@ async def run(pc, signaling):
 
     # Antwort erstellen
     answer = await pc.createAnswer()
-
-    print("Answer created")
-    # await pc.setLocalDescription(modified)
-    # await pc.setLocalDescription(patched_answer)
     await pc.setLocalDescription(answer)
     print("Local description set")
-    # await signaling.send(pc.localDescription)
-    # await signaling.send(modified)
     await signaling.send(pc.localDescription)
     print("Answer sent to sender")
 
     print("Waiting for connection to be established...")
     while pc.connectionState != "connected":
         await asyncio.sleep(0.1)
+        if pc.connectionState in ["failed", "closed"]:
+            print("Connection failed before being established.")
+            return
 
-        print(f"Current state: {pc.connectionState}")
     print("Connection established, waiting for frames...")
-    await asyncio.sleep(100)  # Wait for 35 seconds to receive frames
-    await pc.close()
-    cv2.destroyAllWindows()
-    print("Closing connection")
+
+    # Hier warten wir, bis Verbindung endet
+    while pc.connectionState == "connected":
+        await asyncio.sleep(1)
+
+    print("Connection ended, closing...")
 
 
 async def main():
-    signaling = TcpSocketSignaling("192.168.178.24", 9999)
-    # signaling = TcpSocketSignaling("127.0.0.1", 6139)
-    pc = RTCPeerConnection()
-
     global video_receiver
-    video_receiver = VideoReceiver()
+    reconnect_delay = 5  # Sekunden warten vor Reconnect
 
-    try:
-        await run(pc, signaling)
-    except Exception as e:
-        print(f"Error in main: {str(e)}")
-    finally:
-        print("Closing peer connection")
-        await pc.close()
-        cv2.destroyAllWindows()
+    while True:
+        signaling = TcpSocketSignaling("192.168.178.24", 9999)
+        pc = RTCPeerConnection()
+        video_receiver = VideoReceiver()
+
+        try:
+            await run(pc, signaling)
+        except Exception as e:
+            print(f"Error in main: {e}")
+            traceback.print_exc()
+        finally:
+            print("Closing peer connection")
+            await pc.close()
+            cv2.destroyAllWindows()
+
+        print(f"Reconnecting in {reconnect_delay} seconds...")
+        await asyncio.sleep(reconnect_delay)
 
 
 if __name__ == "__main__":
